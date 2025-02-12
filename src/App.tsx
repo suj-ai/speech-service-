@@ -52,6 +52,7 @@ function App() {
     utterance.onerror = () => setIsPlaying(false);
 
     window.speechSynthesis.speak(utterance);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings, useAzure]);
 
   useEffect(() => {
@@ -59,24 +60,26 @@ function App() {
       const voices = window.speechSynthesis.getVoices();
       
       const sortedVoices = [...voices].sort((a, b) => {
-        const aIsAnna = a.name.toLowerCase().includes('anna') && a.lang === 'en-US';
-        const bIsAnna = b.name.toLowerCase().includes('anna') && b.lang === 'en-US';
+        // Prioritize Microsoft Zira
+        const aIsZira = a.name.toLowerCase().includes('microsoft zira');
+        const bIsZira = b.name.toLowerCase().includes('microsoft zira');
         
-        if (aIsAnna && !bIsAnna) return -1;
-        if (!aIsAnna && bIsAnna) return 1;
+        if (aIsZira && !bIsZira) return -1;
+        if (!aIsZira && bIsZira) return 1;
         return 0;
       });
 
       setAvailableVoices(sortedVoices);
       
-      const annaVoice = sortedVoices.find(voice => 
-        voice.name.toLowerCase().includes('anna') &&
-        voice.lang === 'en-US'
+      // Try to find Microsoft Zira
+      const ziraVoice = sortedVoices.find(voice => 
+        voice.name.toLowerCase().includes('microsoft zira')
       );
       
-      if (annaVoice && (!settings.voice || !settings.voice.name.toLowerCase().includes('anna'))) {
-        setSettings(prev => ({ ...prev, voice: annaVoice }));
+      if (ziraVoice && (!settings.voice || !settings.voice.name.toLowerCase().includes('microsoft zira'))) {
+        setSettings(prev => ({ ...prev, voice: ziraVoice }));
       } else if (sortedVoices.length > 0 && !settings.voice) {
+        // If Zira is not available, use the first available voice
         setSettings(prev => ({ ...prev, voice: sortedVoices[0] }));
       }
     };
@@ -95,12 +98,13 @@ function App() {
       textParam = decodeURIComponent(textParam);
       setText(textParam);
       // Wait for voices to load before speaking
-      setTimeout(() => speak(textParam), 500);
+      setTimeout(() => speak(textParam || ''), 500);
     }
 
     return () => {
       window.speechSynthesis.cancel();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [speak]);
 
   const speakWithAzure = async (textToSpeak: string) => {
@@ -152,9 +156,8 @@ function App() {
     }
   };
 
-  const isAnnaVoice = (voice: SpeechSynthesisVoice) => 
-    voice.name.toLowerCase().includes('anna') &&
-    voice.lang === 'en-US';
+  const isZiraVoice = (voice: SpeechSynthesisVoice) => 
+    voice.name.toLowerCase().includes('microsoft zira');
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
@@ -259,9 +262,9 @@ function App() {
                         <option 
                           key={voice.name} 
                           value={voice.name}
-                          className={isAnnaVoice(voice) ? 'font-bold text-indigo-600' : ''}
+                          className={isZiraVoice(voice) ? 'font-bold text-indigo-600' : ''}
                         >
-                          {voice.name} {isAnnaVoice(voice) ? '(Recommended)' : `(${voice.lang})`}
+                          {voice.name} {isZiraVoice(voice) ? '(Recommended)' : `(${voice.lang})`}
                         </option>
                       ))}
                     </select>
