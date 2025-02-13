@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Volume2, Play, Pause, Settings, Cloud, Monitor } from 'lucide-react';
+import { Volume2, Play, Pause, Settings, Cloud, Monitor, Sparkles } from 'lucide-react';
 import * as sdk from 'microsoft-cognitiveservices-speech-sdk';
+import { TextGenerator } from './components/TextGenerator';
 
 interface VoiceSettings {
   voice: SpeechSynthesisVoice | null;
@@ -12,6 +13,12 @@ interface AzureConfig {
   key: string;
   region: string;
   voice: string;
+}
+
+interface AIConfig {
+  openaiKey: string;
+  geminiKey: string;
+  selectedModel: 'none' | 'openai' | 'gemini';
 }
 
 function App() {
@@ -29,6 +36,11 @@ function App() {
     key: '',
     region: '',
     voice: 'en-US-JennyNeural',
+  });
+  const [aiConfig, setAIConfig] = useState<AIConfig>({
+    openaiKey: '',
+    geminiKey: '',
+    selectedModel: 'none'
   });
 
   const speak = useCallback((textToSpeak: string) => {
@@ -104,7 +116,6 @@ function App() {
     return () => {
       window.speechSynthesis.cancel();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [speak]);
 
   const speakWithAzure = async (textToSpeak: string) => {
@@ -159,6 +170,10 @@ function App() {
   const isZiraVoice = (voice: SpeechSynthesisVoice) => 
     voice.name.toLowerCase().includes('microsoft zira');
 
+  const handleTextGenerated = (generatedText: string) => {
+    setText(generatedText);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
       <div className="max-w-2xl mx-auto">
@@ -178,143 +193,227 @@ function App() {
           </div>
 
           {showSettings && (
-            <div className="p-4 bg-gray-50 rounded-lg space-y-4">
-              <div className="flex items-center space-x-4 mb-4">
-                <button
-                  onClick={() => setUseAzure(false)}
-                  className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
-                    !useAzure ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'
-                  }`}
-                >
-                  <Monitor className="w-4 h-4" />
-                  <span>Browser TTS</span>
-                </button>
-                <button
-                  onClick={() => setUseAzure(true)}
-                  className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
-                    useAzure ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'
-                  }`}
-                >
-                  <Cloud className="w-4 h-4" />
-                  <span>Azure Speech</span>
-                </button>
+            <div className="p-4 bg-gray-50 rounded-lg space-y-6">
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-gray-800">Voice Settings</h3>
+                <div className="flex items-center space-x-4 mb-4">
+                  <button
+                    onClick={() => setUseAzure(false)}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
+                      !useAzure ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    <Monitor className="w-4 h-4" />
+                    <span>Browser TTS</span>
+                  </button>
+                  <button
+                    onClick={() => setUseAzure(true)}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
+                      useAzure ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    <Cloud className="w-4 h-4" />
+                    <span>Azure Speech</span>
+                  </button>
+                </div>
+
+                {useAzure ? (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Azure Key
+                      </label>
+                      <input
+                        type="password"
+                        value={azureConfig.key}
+                        onChange={(e) => setAzureConfig(prev => ({ ...prev, key: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                        placeholder="Enter your Azure Speech Service key"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Azure Region
+                      </label>
+                      <input
+                        type="text"
+                        value={azureConfig.region}
+                        onChange={(e) => setAzureConfig(prev => ({ ...prev, region: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                        placeholder="e.g., eastus"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Azure Voice
+                      </label>
+                      <select
+                        value={azureConfig.voice}
+                        onChange={(e) => setAzureConfig(prev => ({ ...prev, voice: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      >
+                        <option value="en-US-JennyNeural">Jenny (Neural)</option>
+                        <option value="en-US-GuyNeural">Guy (Neural)</option>
+                        <option value="en-US-AriaNeural">Aria (Neural)</option>
+                        <option value="en-US-DavisNeural">Davis (Neural)</option>
+                      </select>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        Voice
+                      </label>
+                      <select
+                        value={settings.voice?.name || ''}
+                        onChange={(e) => {
+                          const selectedVoice = availableVoices.find(
+                            voice => voice.name === e.target.value
+                          );
+                          setSettings(prev => ({ ...prev, voice: selectedVoice || null }));
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      >
+                        {availableVoices.map((voice) => (
+                          <option 
+                            key={voice.name} 
+                            value={voice.name}
+                            className={isZiraVoice(voice) ? 'font-bold text-indigo-600' : ''}
+                          >
+                            {voice.name} {isZiraVoice(voice) ? '(Recommended)' : `(${voice.lang})`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        Voice Pitch
+                      </label>
+                      <div className="relative pt-1">
+                        <input
+                          type="range"
+                          min="-50"
+                          max="50"
+                          value={settings.pitch}
+                          onChange={(e) => setSettings(prev => ({ ...prev, pitch: parseFloat(e.target.value) }))}
+                          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                        />
+                        <div className="flex justify-between text-xs text-gray-600 px-2 mt-2">
+                          <span>-50%</span>
+                          <span className="text-blue-500">{settings.pitch}%</span>
+                          <span>50%</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        Adjust Voice Speed
+                      </label>
+                      <div className="relative pt-1">
+                        <input
+                          type="range"
+                          min="-100"
+                          max="100"
+                          value={settings.rate}
+                          onChange={(e) => setSettings(prev => ({ ...prev, rate: parseFloat(e.target.value) }))}
+                          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                        />
+                        <div className="flex justify-between text-xs text-gray-600 px-2 mt-2">
+                          <span>-100%</span>
+                          <span className="text-blue-500">{settings.rate}%</span>
+                          <span>100%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {useAzure ? (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Azure Key
-                    </label>
-                    <input
-                      type="password"
-                      value={azureConfig.key}
-                      onChange={(e) => setAzureConfig(prev => ({ ...prev, key: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                      placeholder="Enter your Azure Speech Service key"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Azure Region
-                    </label>
-                    <input
-                      type="text"
-                      value={azureConfig.region}
-                      onChange={(e) => setAzureConfig(prev => ({ ...prev, region: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                      placeholder="e.g., eastus"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Azure Voice
-                    </label>
-                    <select
-                      value={azureConfig.voice}
-                      onChange={(e) => setAzureConfig(prev => ({ ...prev, voice: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    >
-                      <option value="en-US-JennyNeural">Jenny (Neural)</option>
-                      <option value="en-US-GuyNeural">Guy (Neural)</option>
-                      <option value="en-US-AriaNeural">Aria (Neural)</option>
-                      <option value="en-US-DavisNeural">Davis (Neural)</option>
-                    </select>
-                  </div>
+              <div className="space-y-4 border-t pt-4">
+                <h3 className="text-lg font-semibold text-gray-800">AI Settings</h3>
+                <div className="flex items-center space-x-4 mb-4">
+                  <button
+                    onClick={() => setAIConfig(prev => ({ ...prev, selectedModel: 'none' }))}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
+                      aiConfig.selectedModel === 'none' ? 'bg-gray-600 text-white' : 'bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    <span>No AI</span>
+                  </button>
+                  <button
+                    onClick={() => setAIConfig(prev => ({ ...prev, selectedModel: 'openai' }))}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
+                      aiConfig.selectedModel === 'openai' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    <span>OpenAI</span>
+                  </button>
+                  <button
+                    onClick={() => setAIConfig(prev => ({ ...prev, selectedModel: 'gemini' }))}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
+                      aiConfig.selectedModel === 'gemini' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    <span>Gemini</span>
+                  </button>
                 </div>
-              ) : (
-                <div className="space-y-6">
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-gray-700">
-                      Voice
-                    </label>
-                    <select
-                      value={settings.voice?.name || ''}
-                      onChange={(e) => {
-                        const selectedVoice = availableVoices.find(
-                          voice => voice.name === e.target.value
-                        );
-                        setSettings(prev => ({ ...prev, voice: selectedVoice || null }));
-                      }}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    >
-                      {availableVoices.map((voice) => (
-                        <option 
-                          key={voice.name} 
-                          value={voice.name}
-                          className={isZiraVoice(voice) ? 'font-bold text-indigo-600' : ''}
-                        >
-                          {voice.name} {isZiraVoice(voice) ? '(Recommended)' : `(${voice.lang})`}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
 
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-gray-700">
-                      Voice Pitch
-                    </label>
-                    <div className="relative pt-1">
-                      <input
-                        type="range"
-                        min="-50"
-                        max="50"
-                        value={settings.pitch}
-                        onChange={(e) => setSettings(prev => ({ ...prev, pitch: parseFloat(e.target.value) }))}
-                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                      />
-                      <div className="flex justify-between text-xs text-gray-600 px-2 mt-2">
-                        <span>-50%</span>
-                        <span className="text-blue-500">{settings.pitch}%</span>
-                        <span>50%</span>
+                {aiConfig.selectedModel !== 'none' && (
+                  <div className="space-y-4">
+                    {aiConfig.selectedModel === 'openai' && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          OpenAI API Key
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="password"
+                            value={aiConfig.openaiKey}
+                            onChange={(e) => setAIConfig(prev => ({ ...prev, openaiKey: e.target.value }))}
+                            className="w-full px-3 py-2 border border-green-300 bg-green-50 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                            placeholder="sk-..."
+                          />
+                          <Sparkles className="absolute right-3 top-2.5 w-5 h-5 text-green-600" />
+                        </div>
+                        {!aiConfig.openaiKey && (
+                          <p className="mt-2 text-sm text-red-600">Please add your OpenAI API key to use text generation</p>
+                        )}
                       </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-gray-700">
-                      Adjust Voice Speed
-                    </label>
-                    <div className="relative pt-1">
-                      <input
-                        type="range"
-                        min="-100"
-                        max="100"
-                        value={settings.rate}
-                        onChange={(e) => setSettings(prev => ({ ...prev, rate: parseFloat(e.target.value) }))}
-                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                      />
-                      <div className="flex justify-between text-xs text-gray-600 px-2 mt-2">
-                        <span>-100%</span>
-                        <span className="text-blue-500">{settings.rate}%</span>
-                        <span>100%</span>
+                    )}
+                    {aiConfig.selectedModel === 'gemini' && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Gemini API Key
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="password"
+                            value={aiConfig.geminiKey}
+                            onChange={(e) => setAIConfig(prev => ({ ...prev, geminiKey: e.target.value }))}
+                            className="w-full px-3 py-2 border border-blue-300 bg-blue-50 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="Enter your Gemini API key"
+                          />
+                          <Sparkles className="absolute right-3 top-2.5 w-5 h-5 text-blue-600" />
+                        </div>
+                        {!aiConfig.geminiKey && (
+                          <p className="mt-2 text-sm text-red-600">Please add your Gemini API key to use text generation</p>
+                        )}
                       </div>
-                    </div>
+                    )}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           )}
+
+          <TextGenerator 
+            onTextGenerated={handleTextGenerated}
+            onGenerate={speak}
+            aiConfig={aiConfig}
+          />
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
