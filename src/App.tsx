@@ -23,8 +23,18 @@ function App() {
   // Use refs to maintain state during async operations
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const voicesLoadedRef = useRef(false);
+  const autoplayTextRef = useRef<string | null>(null);
 
   useEffect(() => {
+    // Check for URL parameters immediately
+    const urlParams = new URLSearchParams(window.location.search);
+    const textParam = urlParams.get('text');
+    if (textParam) {
+      const decodedText = decodeURIComponent(textParam);
+      setText(decodedText);
+      autoplayTextRef.current = decodedText; // Store for autoplay
+    }
+
     let retryCount = 0;
     const maxRetries = 50; // 5 seconds total (50 * 100ms)
 
@@ -65,14 +75,14 @@ function App() {
         setSettings(prev => ({ ...prev, voice: sortedVoices[0] }));
       }
 
-      // Check for URL parameters after voices are loaded
-      const urlParams = new URLSearchParams(window.location.search);
-      const textParam = urlParams.get('text');
-      if (textParam) {
-        const decodedText = decodeURIComponent(textParam);
-        setText(decodedText);
-        // Delay speaking to ensure voice is properly set
-        setTimeout(() => speak(decodedText), 500);
+      // Attempt autoplay if we have stored text
+      if (autoplayTextRef.current) {
+        const textToSpeak = autoplayTextRef.current;
+        autoplayTextRef.current = null; // Clear stored text
+        
+        // Use a longer delay for Windows to ensure voice is properly initialized
+        const delay = navigator.userAgent.toLowerCase().includes('windows') ? 1000 : 500;
+        setTimeout(() => speak(textToSpeak), delay);
       }
     };
 
