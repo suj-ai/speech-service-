@@ -24,17 +24,20 @@ function App() {
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const voicesLoadedRef = useRef(false);
   const autoplayTextRef = useRef<string | null>(null);
+  const voiceInitializedRef = useRef(false);
 
+  // Initialize text from URL parameter
   useEffect(() => {
-    // Check for URL parameters immediately
     const urlParams = new URLSearchParams(window.location.search);
     const textParam = urlParams.get('text');
     if (textParam) {
       const decodedText = decodeURIComponent(textParam);
       setText(decodedText);
-      autoplayTextRef.current = decodedText; // Store for autoplay
+      autoplayTextRef.current = decodedText;
     }
+  }, []);
 
+  useEffect(() => {
     let retryCount = 0;
     const maxRetries = 50; // 5 seconds total (50 * 100ms)
 
@@ -65,7 +68,7 @@ function App() {
       setAvailableVoices(sortedVoices);
       
       // Try to find Microsoft voice
-      const microsoftVoice = sortedVoices.find(voice => 
+      const microsoftVoice = sortedVoices.find(voice =>
         voice.name.toLowerCase().includes('microsoft')
       );
       
@@ -75,15 +78,7 @@ function App() {
         setSettings(prev => ({ ...prev, voice: sortedVoices[0] }));
       }
 
-      // Attempt autoplay if we have stored text
-      if (autoplayTextRef.current) {
-        const textToSpeak = autoplayTextRef.current;
-        autoplayTextRef.current = null; // Clear stored text
-        
-        // Use a longer delay for Windows to ensure voice is properly initialized
-        const delay = navigator.userAgent.toLowerCase().includes('windows') ? 1000 : 500;
-        setTimeout(() => speak(textToSpeak), delay);
-      }
+      voiceInitializedRef.current = true;
     };
 
     // Initial load attempt
@@ -99,6 +94,18 @@ function App() {
       }
     };
   }, []);
+
+  // Separate effect for autoplay to ensure voice is initialized
+  useEffect(() => {
+    if (voiceInitializedRef.current && autoplayTextRef.current && settings.voice) {
+      const textToSpeak = autoplayTextRef.current;
+      autoplayTextRef.current = null; // Clear stored text
+      
+      // Use a longer delay for Windows to ensure voice is properly initialized
+      const delay = navigator.userAgent.toLowerCase().includes('windows') ? 1000 : 500;
+      setTimeout(() => speak(textToSpeak), delay);
+    }
+  }, [settings.voice]);
 
   // Chrome bug workaround: restart long utterances
   useEffect(() => {
@@ -123,7 +130,7 @@ function App() {
   }, [isPlaying]);
 
   const speak = useCallback((textToSpeak: string) => {
-    if (textToSpeak.trim() === '') return;
+    if (textToSpeak.trim() === '' || !settings.voice) return;
 
     // Cancel any ongoing speech
     window.speechSynthesis.cancel();
@@ -132,9 +139,7 @@ function App() {
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
     utteranceRef.current = utterance;
 
-    if (settings.voice) {
-      utterance.voice = settings.voice;
-    }
+    utterance.voice = settings.voice;
     
     // Convert percentage adjustments to actual values
     utterance.rate = 1 + (settings.rate / 100);
@@ -213,8 +218,8 @@ function App() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 >
                   {availableVoices.map((voice) => (
-                    <option 
-                      key={voice.name} 
+                    <option
+                      key={voice.name}
                       value={voice.name}
                     >
                       {voice.name} ({voice.lang})
