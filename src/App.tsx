@@ -25,7 +25,6 @@ function App() {
   const voicesLoadedRef = useRef(false);
   const autoplayTextRef = useRef<string | null>(null);
   const voiceInitializedRef = useRef(false);
-  const initializationAttempts = useRef(0);
 
   // Initialize text from URL parameter
   useEffect(() => {
@@ -38,99 +37,95 @@ function App() {
     }
   }, []);
 
-  // Function to attempt voice initialization
-  const initializeVoice = useCallback(() => {
-    const voices = window.speechSynthesis.getVoices();
-    
-    if (voices.length === 0) {
-      return false;
-    }
-
-    // Sort voices to prioritize Microsoft voices
-    const sortedVoices = [...voices].sort((a, b) => {
-      const aIsMicrosoft = a.name.toLowerCase().includes('microsoft');
-      const bIsMicrosoft = b.name.toLowerCase().includes('microsoft');
-      
-      if (aIsMicrosoft && !bIsMicrosoft) return -1;
-      if (!aIsMicrosoft && bIsMicrosoft) return 1;
-      return 0;
-    });
-
-    setAvailableVoices(sortedVoices);
-    
-    // Try to find Microsoft voice
-    const microsoftVoice = sortedVoices.find(voice =>
-      voice.name.toLowerCase().includes('microsoft')
-    );
-    
-    if (microsoftVoice) {
-      setSettings(prev => ({ ...prev, voice: microsoftVoice }));
-    } else if (sortedVoices.length > 0) {
-      setSettings(prev => ({ ...prev, voice: sortedVoices[0] }));
-    }
-
-    voiceInitializedRef.current = true;
-    return true;
-  }, []);
-
+  // Initialize voices
   useEffect(() => {
-    const maxAttempts = 50; // 5 seconds total
-    const attemptInterval = 100; // 100ms between attempts
+    let mounted = true;
+    let retryTimeout: number;
 
-    const attemptInitialization = () => {
-      if (initializationAttempts.current >= maxAttempts) {
-        console.warn('Voice initialization timed out');
+    const loadVoices = async () => {
+      // Pre-warm speech synthesis for Chrome
+      if (window.chrome) {
+        window.speechSynthesis.cancel();
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      const voices = window.speechSynthesis.getVoices();
+      
+      if (!mounted) return;
+
+      if (voices.length === 0) {
+        retryTimeout = window.setTimeout(loadVoices, 100);
         return;
       }
 
-      if (!voicesLoadedRef.current) {
-        initializationAttempts.current++;
+      if (voicesLoadedRef.current) return;
+      voicesLoadedRef.current = true;
+
+      // Sort voices to prioritize Microsoft voices
+      const sortedVoices = [...voices].sort((a, b) => {
+        const aIsMicrosoft = a.name.toLowerCase().includes('microsoft');
+        const bIsMicrosoft = b.name.toLowerCase().includes('microsoft');
         
-        if (initializeVoice()) {
-          voicesLoadedRef.current = true;
-        } else {
-          setTimeout(attemptInitialization, attemptInterval);
-        }
+        if (aIsMicrosoft && !bIsMicrosoft) return -1;
+        if (!aIsMicrosoft && bIsMicrosoft) return 1;
+        return 0;
+      });
+
+      setAvailableVoices(sortedVoices);
+      
+      // Try to find Microsoft voice
+      const microsoftVoice = sortedVoices.find(voice =>
+        voice.name.toLowerCase().includes('microsoft')
+      );
+      
+      if (microsoftVoice) {
+        setSettings(prev => ({ ...prev, voice: microsoftVoice }));
+      } else if (sortedVoices.length > 0) {
+        setSettings(prev => ({ ...prev, voice: sortedVoices[0] }));
+      }
+
+      voiceInitializedRef.current = true;
+
+      // For Chrome, ensure the voice is properly initialized
+      if (window.chrome && autoplayTextRef.current) {
+        const warmup = new SpeechSynthesisUtterance('');
+        warmup.voice = microsoftVoice || sortedVoices[0];
+        window.speechSynthesis.speak(warmup);
+        window.speechSynthesis.cancel();
       }
     };
 
-    // Initial attempt
-    attemptInitialization();
-    
-    // Also listen for voiceschanged event
-    const handleVoicesChanged = () => {
+    // Initial load
+    loadVoices();
+
+    // Handle voice changes
+    window.speechSynthesis.onvoiceschanged = () => {
       if (!voicesLoadedRef.current) {
-        initializeVoice();
+        loadVoices();
       }
     };
 
-    window.speechSynthesis.onvoiceschanged = handleVoicesChanged;
-
-    // Force a refresh of voices on Chrome
-    if (window?.chrome) {
-      window.speechSynthesis.cancel();
-    }
-
-    // Cleanup
     return () => {
+      mounted = false;
+      if (retryTimeout) {
+        clearTimeout(retryTimeout);
+      }
       if (utteranceRef.current) {
         window.speechSynthesis.cancel();
       }
     };
-  }, [initializeVoice]);
+  }, []);
 
-  // Separate effect for autoplay to ensure voice is initialized
+  // Handle autoplay
   useEffect(() => {
     if (voiceInitializedRef.current && autoplayTextRef.current && settings.voice) {
       const textToSpeak = autoplayTextRef.current;
-      autoplayTextRef.current = null; // Clear stored text
-      
-      // Longer delay for Chrome on Windows
-      const isWindows = navigator.userAgent.toLowerCase().includes('windows');
-      const isChrome = navigator.userAgent.toLowerCase().includes('chrome');
-      const delay = (isWindows && isChrome) ? 2000 : 500;
-      
-      // Pre-warm speech synthesis
+      autoplayTextRef.current = null;
+
+      const isChrome = !!window.chrome;
+      const delay = isChrome ? 1500 : 500;
+
+      // For Chrome, do an additional pre-warm right before speaking
       if (isChrome) {
         const warmup = new SpeechSynthesisUtterance('');
         warmup.voice = settings.voice;
@@ -138,7 +133,15 @@ function App() {
         window.speechSynthesis.cancel();
       }
 
-      setTimeout(() => speak(textToSpeak), delay);
+      setTimeout(() => {
+        if (isChrome) {
+          // For Chrome, ensure synthesis is ready
+          window.speechSynthesis.cancel();
+          setTimeout(() => speak(textToSpeak), 100);
+        } else {
+          speak(textToSpeak);
+        }
+      }, delay);
     }
   }, [settings.voice]);
 
@@ -167,8 +170,10 @@ function App() {
   const speak = useCallback((textToSpeak: string) => {
     if (textToSpeak.trim() === '' || !settings.voice) return;
 
-    // Cancel any ongoing speech
-    window.speechSynthesis.cancel();
+    // For Chrome, ensure clean state
+    if (window.chrome) {
+      window.speechSynthesis.cancel();
+    }
     
     // Create new utterance
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
