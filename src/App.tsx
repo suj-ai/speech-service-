@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Volume2, Play, Pause } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from "react";
+import { Volume2, Play, Pause, Settings, Cloud, Monitor } from "lucide-react";
+import * as sdk from "microsoft-cognitiveservices-speech-sdk";
 
 interface VoiceSettings {
   voice: SpeechSynthesisVoice | null;
@@ -7,199 +8,153 @@ interface VoiceSettings {
   pitch: number;
 }
 
-// Default settings
-const DEFAULT_SETTINGS: VoiceSettings = {
-  voice: null,
-  rate: -10, // -10% default speed
-  pitch: -10, // -10% default pitch
-};
+interface AzureConfig {
+  key: string;
+  region: string;
+  voice: string;
+}
 
 function App() {
-  const [text, setText] = useState('');
-  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [text, setText] = useState("");
+  const [availableVoices, setAvailableVoices] = useState<
+    SpeechSynthesisVoice[]
+  >([]);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [settings, setSettings] = useState<VoiceSettings>(DEFAULT_SETTINGS);
-  
-  // Use refs to maintain state during async operations
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const voicesLoadedRef = useRef(false);
-  const autoplayTextRef = useRef<string | null>(null);
-  const voiceInitializedRef = useRef(false);
+  const [useAzure, setUseAzure] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState<VoiceSettings>({
+    voice: null,
+    rate: -10,
+    pitch: -10,
+  });
+  const [azureConfig, setAzureConfig] = useState<AzureConfig>({
+    key: "",
+    region: "",
+    voice: "en-US-JennyNeural",
+  });
 
-  // Initialize text from URL parameter
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const textParam = urlParams.get('text');
-    if (textParam) {
-      const decodedText = decodeURIComponent(textParam);
-      setText(decodedText);
-      autoplayTextRef.current = decodedText;
-    }
-  }, []);
-
-  // Initialize voices
-  useEffect(() => {
-    let mounted = true;
-    let retryTimeout: number;
-
-    const loadVoices = async () => {
-      // Pre-warm speech synthesis for Chrome
-      if (window.chrome) {
-        window.speechSynthesis.cancel();
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-
-      const voices = window.speechSynthesis.getVoices();
-      
-      if (!mounted) return;
-
-      if (voices.length === 0) {
-        retryTimeout = window.setTimeout(loadVoices, 100);
+  const speak = useCallback(
+    (textToSpeak: string) => {
+      if (useAzure) {
+        speakWithAzure(textToSpeak);
         return;
       }
 
-      if (voicesLoadedRef.current) return;
-      voicesLoadedRef.current = true;
+      window.speechSynthesis.cancel();
 
-      // Sort voices to prioritize Microsoft voices
+      if (textToSpeak.trim() === "") return;
+
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
+      if (settings.voice) utterance.voice = settings.voice;
+
+      utterance.rate = 1 + settings.rate / 100;
+      utterance.pitch = 1 + settings.pitch / 100;
+
+      utterance.onstart = () => setIsPlaying(true);
+      utterance.onend = () => setIsPlaying(false);
+      utterance.onerror = () => setIsPlaying(false);
+
+      window.speechSynthesis.speak(utterance);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [settings, useAzure]
+  );
+
+  useEffect(() => {
+    const loadVoices = () => {
+      const voices = window.speechSynthesis.getVoices();
+
       const sortedVoices = [...voices].sort((a, b) => {
-        const aIsMicrosoft = a.name.toLowerCase().includes('microsoft');
-        const bIsMicrosoft = b.name.toLowerCase().includes('microsoft');
-        
-        if (aIsMicrosoft && !bIsMicrosoft) return -1;
-        if (!aIsMicrosoft && bIsMicrosoft) return 1;
+        // Prioritize Microsoft Zira
+        const aIsZira = a.name.toLowerCase().includes("microsoft zira");
+        const bIsZira = b.name.toLowerCase().includes("microsoft zira");
+
+        if (aIsZira && !bIsZira) return -1;
+        if (!aIsZira && bIsZira) return 1;
         return 0;
       });
 
       setAvailableVoices(sortedVoices);
-      
-      // Try to find Microsoft voice
-      const microsoftVoice = sortedVoices.find(voice =>
-        voice.name.toLowerCase().includes('microsoft')
+
+      // Try to find Microsoft Zira
+      const ziraVoice = sortedVoices.find((voice) =>
+        voice.name.toLowerCase().includes("microsoft zira")
       );
-      
-      if (microsoftVoice) {
-        setSettings(prev => ({ ...prev, voice: microsoftVoice }));
-      } else if (sortedVoices.length > 0) {
-        setSettings(prev => ({ ...prev, voice: sortedVoices[0] }));
-      }
 
-      voiceInitializedRef.current = true;
-
-      // For Chrome, ensure the voice is properly initialized
-      if (window.chrome && autoplayTextRef.current) {
-        const warmup = new SpeechSynthesisUtterance('');
-        warmup.voice = microsoftVoice || sortedVoices[0];
-        window.speechSynthesis.speak(warmup);
-        window.speechSynthesis.cancel();
+      if (
+        ziraVoice &&
+        (!settings.voice ||
+          !settings.voice.name.toLowerCase().includes("microsoft zira"))
+      ) {
+        setSettings((prev) => ({ ...prev, voice: ziraVoice }));
+      } else if (sortedVoices.length > 0 && !settings.voice) {
+        // If Zira is not available, use the first available voice
+        setSettings((prev) => ({ ...prev, voice: sortedVoices[0] }));
       }
     };
 
-    // Initial load
     loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
 
-    // Handle voice changes
-    window.speechSynthesis.onvoiceschanged = () => {
-      if (!voicesLoadedRef.current) {
-        loadVoices();
-      }
-    };
+    // Handle URL parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    let textParam = urlParams.get("text");
 
-    return () => {
-      mounted = false;
-      if (retryTimeout) {
-        clearTimeout(retryTimeout);
-      }
-      if (utteranceRef.current) {
-        window.speechSynthesis.cancel();
-      }
-    };
-  }, []);
-
-  // Handle autoplay
-  useEffect(() => {
-    if (voiceInitializedRef.current && autoplayTextRef.current && settings.voice) {
-      const textToSpeak = autoplayTextRef.current;
-      autoplayTextRef.current = null;
-
-      const isChrome = !!window.chrome;
-      const delay = isChrome ? 1500 : 500;
-
-      // For Chrome, do an additional pre-warm right before speaking
-      if (isChrome) {
-        const warmup = new SpeechSynthesisUtterance('');
-        warmup.voice = settings.voice;
-        window.speechSynthesis.speak(warmup);
-        window.speechSynthesis.cancel();
-      }
-
-      setTimeout(() => {
-        if (isChrome) {
-          // For Chrome, ensure synthesis is ready
-          window.speechSynthesis.cancel();
-          setTimeout(() => speak(textToSpeak), 100);
-        } else {
-          speak(textToSpeak);
-        }
-      }, delay);
-    }
-  }, [settings.voice]);
-
-  // Chrome bug workaround: restart long utterances
-  useEffect(() => {
-    let intervalId: number;
-    
-    if (isPlaying) {
-      intervalId = window.setInterval(() => {
-        if (!window.speechSynthesis.speaking) {
-          clearInterval(intervalId);
-          return;
-        }
-        window.speechSynthesis.pause();
-        window.speechSynthesis.resume();
-      }, 14000);
+    if (textParam) {
+      // Remove surrounding quotes if present
+      textParam = textParam.replace(/^["'](.*)["']$/, "$1");
+      // Decode URL-encoded characters
+      textParam = decodeURIComponent(textParam);
+      setText(textParam);
+      // Wait for voices to load before speaking
+      setTimeout(() => speak(textParam || ""), 500);
     }
 
     return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
-    };
-  }, [isPlaying]);
-
-  const speak = useCallback((textToSpeak: string) => {
-    if (textToSpeak.trim() === '' || !settings.voice) return;
-
-    // For Chrome, ensure clean state
-    if (window.chrome) {
       window.speechSynthesis.cancel();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speak]);
+
+  const speakWithAzure = async (textToSpeak: string) => {
+    if (!azureConfig.key || !azureConfig.region) {
+      alert("Please configure Azure Speech Service first");
+      setShowSettings(true);
+      return;
     }
-    
-    // Create new utterance
-    const utterance = new SpeechSynthesisUtterance(textToSpeak);
-    utteranceRef.current = utterance;
 
-    utterance.voice = settings.voice;
-    
-    // Convert percentage adjustments to actual values
-    utterance.rate = 1 + (settings.rate / 100);
-    utterance.pitch = 1 + (settings.pitch / 100);
+    const speechConfig = sdk.SpeechConfig.fromSubscription(
+      azureConfig.key,
+      azureConfig.region
+    );
+    speechConfig.speechSynthesisVoiceName = azureConfig.voice;
 
-    // Event handlers
-    utterance.onstart = () => setIsPlaying(true);
-    utterance.onend = () => {
+    const synthesizer = new sdk.SpeechSynthesizer(speechConfig);
+    setIsPlaying(true);
+
+    try {
+      const result = await new Promise<sdk.SpeechSynthesisResult>(
+        (resolve, reject) => {
+          synthesizer.speakTextAsync(
+            textToSpeak,
+            (result) => resolve(result),
+            (error) => reject(error)
+          );
+        }
+      );
+
+      if (result) {
+        synthesizer.close();
+      }
+    } catch (error) {
+      console.error("Error synthesizing speech:", error);
+      alert(
+        "Error synthesizing speech. Please check your Azure configuration."
+      );
+    } finally {
       setIsPlaying(false);
-      utteranceRef.current = null;
-    };
-    utterance.onerror = (event) => {
-      console.error('Speech synthesis error:', event);
-      setIsPlaying(false);
-      utteranceRef.current = null;
-    };
-
-    // Start speaking
-    window.speechSynthesis.speak(utterance);
-  }, [settings]);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -208,139 +163,257 @@ function App() {
 
   const togglePlayPause = () => {
     if (isPlaying) {
-      window.speechSynthesis.cancel();
+      if (!useAzure) {
+        window.speechSynthesis.cancel();
+      }
       setIsPlaying(false);
-      utteranceRef.current = null;
     } else {
       speak(text);
     }
   };
 
+  const isZiraVoice = (voice: SpeechSynthesisVoice) =>
+    voice.name.toLowerCase().includes("microsoft zira");
+
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
       <div className="max-w-2xl mx-auto">
-        <div className="bg-white rounded-xl shadow-sm p-8">
-          <div className="flex items-center justify-between mb-8">
+        <div className="bg-white rounded-xl shadow-lg p-6 space-y-6">
+          <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <Volume2 className="w-8 h-8 text-indigo-600" />
-              <h1 className="text-2xl font-bold text-gray-800">Text to Speech</h1>
+              <h1 className="text-2xl font-bold text-gray-800">
+                Text to Speech
+              </h1>
             </div>
-            <div className="flex space-x-2">
-              <button
-                type="button"
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium"
-              >
-                Browser TTS
-              </button>
-              <button
-                type="button"
-                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-medium"
-              >
-                Azure Speech
-              </button>
-            </div>
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className="p-2 text-gray-600 hover:text-indigo-600 transition-colors"
+              title="Settings"
+            >
+              <Settings className="w-6 h-6" />
+            </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Voice
-                </label>
-                <select
-                  value={settings.voice?.name || ''}
-                  onChange={(e) => {
-                    const selectedVoice = availableVoices.find(
-                      voice => voice.name === e.target.value
-                    );
-                    setSettings(prev => ({ ...prev, voice: selectedVoice || null }));
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          {showSettings && (
+            <div className="p-4 bg-gray-50 rounded-lg space-y-4">
+              <div className="flex items-center space-x-4 mb-4">
+                <button
+                  onClick={() => setUseAzure(false)}
+                  className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
+                    !useAzure
+                      ? "bg-indigo-600 text-white"
+                      : "bg-gray-200 text-gray-700"
+                  }`}
                 >
-                  {availableVoices.map((voice) => (
-                    <option
-                      key={voice.name}
-                      value={voice.name}
+                  <Monitor className="w-4 h-4" />
+                  <span>Browser TTS</span>
+                </button>
+                <button
+                  onClick={() => setUseAzure(true)}
+                  className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
+                    useAzure
+                      ? "bg-indigo-600 text-white"
+                      : "bg-gray-200 text-gray-700"
+                  }`}
+                >
+                  <Cloud className="w-4 h-4" />
+                  <span>Azure Speech</span>
+                </button>
+              </div>
+
+              {useAzure ? (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Azure Key
+                    </label>
+                    <input
+                      type="password"
+                      value={azureConfig.key}
+                      onChange={(e) =>
+                        setAzureConfig((prev) => ({
+                          ...prev,
+                          key: e.target.value,
+                        }))
+                      }
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      placeholder="Enter your Azure Speech Service key"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Azure Region
+                    </label>
+                    <input
+                      type="text"
+                      value={azureConfig.region}
+                      onChange={(e) =>
+                        setAzureConfig((prev) => ({
+                          ...prev,
+                          region: e.target.value,
+                        }))
+                      }
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      placeholder="e.g., eastus"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Azure Voice
+                    </label>
+                    <select
+                      value={azureConfig.voice}
+                      onChange={(e) =>
+                        setAzureConfig((prev) => ({
+                          ...prev,
+                          voice: e.target.value,
+                        }))
+                      }
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                     >
-                      {voice.name} ({voice.lang})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Voice Pitch
-                </label>
-                <div className="relative pt-1">
-                  <input
-                    type="range"
-                    min="-50"
-                    max="50"
-                    value={settings.pitch}
-                    onChange={(e) => setSettings(prev => ({ ...prev, pitch: parseFloat(e.target.value) }))}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                  />
-                  <div className="flex justify-between text-xs text-gray-600 px-2 mt-2">
-                    <span>-50%</span>
-                    <span className="text-blue-500">{settings.pitch}%</span>
-                    <span>50%</span>
+                      <option value="en-US-JennyNeural">Jenny (Neural)</option>
+                      <option value="en-US-GuyNeural">Guy (Neural)</option>
+                      <option value="en-US-AriaNeural">Aria (Neural)</option>
+                      <option value="en-US-DavisNeural">Davis (Neural)</option>
+                    </select>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Voice
+                    </label>
+                    <select
+                      value={settings.voice?.name || ""}
+                      onChange={(e) => {
+                        const selectedVoice = availableVoices.find(
+                          (voice) => voice.name === e.target.value
+                        );
+                        setSettings((prev) => ({
+                          ...prev,
+                          voice: selectedVoice || null,
+                        }));
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    >
+                      {availableVoices.map((voice) => (
+                        <option
+                          key={voice.name}
+                          value={voice.name}
+                          className={
+                            isZiraVoice(voice)
+                              ? "font-bold text-indigo-600"
+                              : ""
+                          }
+                        >
+                          {voice.name}{" "}
+                          {isZiraVoice(voice)
+                            ? "(Recommended)"
+                            : `(${voice.lang})`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Adjust Voice Speed
-                </label>
-                <div className="relative pt-1">
-                  <input
-                    type="range"
-                    min="-100"
-                    max="100"
-                    value={settings.rate}
-                    onChange={(e) => setSettings(prev => ({ ...prev, rate: parseFloat(e.target.value) }))}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                  />
-                  <div className="flex justify-between text-xs text-gray-600 px-2 mt-2">
-                    <span>-100%</span>
-                    <span className="text-blue-500">{settings.rate}%</span>
-                    <span>100%</span>
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Voice Pitch
+                    </label>
+                    <div className="relative pt-1">
+                      <input
+                        type="range"
+                        min="-50"
+                        max="50"
+                        value={settings.pitch}
+                        onChange={(e) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            pitch: parseFloat(e.target.value),
+                          }))
+                        }
+                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                      />
+                      <div className="flex justify-between text-xs text-gray-600 px-2 mt-2">
+                        <span>-50%</span>
+                        <span className="text-blue-500">{settings.pitch}%</span>
+                        <span>50%</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Adjust Voice Speed
+                    </label>
+                    <div className="relative pt-1">
+                      <input
+                        type="range"
+                        min="-100"
+                        max="100"
+                        value={settings.rate}
+                        onChange={(e) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            rate: parseFloat(e.target.value),
+                          }))
+                        }
+                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                      />
+                      <div className="flex justify-between text-xs text-gray-600 px-2 mt-2">
+                        <span>-100%</span>
+                        <span className="text-blue-500">{settings.rate}%</span>
+                        <span>100%</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
+          )}
 
-            <div className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
               <textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 placeholder="Enter text to convert to speech..."
-                className="w-full h-32 px-4 py-3 text-gray-700 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+                className="w-full h-32 px-4 py-2 text-gray-700 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
               />
+            </div>
 
-              <div className="flex justify-between items-center">
-                <button
-                  type="button"
-                  onClick={togglePlayPause}
-                  className="flex items-center space-x-2 px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 font-medium"
-                >
-                  {isPlaying ? (
-                    <>
-                      <Pause className="w-5 h-5" />
-                      <span>Pause</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-5 h-5" />
-                      <span>Play</span>
-                    </>
-                  )}
-                </button>
+            <div className="flex justify-between items-center">
+              <button
+                type="button"
+                onClick={togglePlayPause}
+                className="flex items-center space-x-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+              >
+                {isPlaying ? (
+                  <>
+                    <Pause className="w-5 h-5" />
+                    <span>Pause</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-5 h-5" />
+                    <span>Play</span>
+                  </>
+                )}
+              </button>
 
-                <div className="flex items-center text-sm text-gray-500">
-                  Browser TTS
-                </div>
+              <div className="flex items-center space-x-2 text-sm text-gray-600">
+                {useAzure ? (
+                  <div className="flex items-center space-x-1">
+                    <Cloud className="w-4 h-4" />
+                    <span>Azure Speech</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-1">
+                    <Monitor className="w-4 h-4" />
+                    <span>Browser TTS</span>
+                  </div>
+                )}
               </div>
             </div>
           </form>
